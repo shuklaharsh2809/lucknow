@@ -391,3 +391,126 @@ export function clockFaceTexture() {
   }
   return toTexture(c, { repeat: false });
 }
+
+// Black-and-white panels of the Chota Imambara facade: framed arabesque scrolls (decorative,
+// not real script). One panel per 1 x 1 UV.
+export function calligraphyTexture() {
+  const size = 256;
+  const [c, g] = canvas(size);
+  const r = rng(1838);
+  g.fillStyle = '#16120f';
+  g.fillRect(0, 0, size, size);
+  g.strokeStyle = '#f3ede0';
+  g.lineWidth = 6;
+  g.strokeRect(10, 10, size - 20, size - 20);
+  g.lineWidth = 2;
+  g.strokeRect(20, 20, size - 40, size - 40);
+  g.lineCap = 'round';
+  for (let i = 0; i < 22; i++) {
+    g.lineWidth = 2 + r() * 4;
+    g.beginPath();
+    const x = 36 + r() * (size - 72), y = 40 + r() * (size - 80);
+    g.moveTo(x, y);
+    g.bezierCurveTo(x + (r() - 0.5) * 90, y - 30 - r() * 30, x + (r() - 0.5) * 90, y + 20, x + (r() - 0.5) * 70, y + (r() - 0.5) * 30);
+    g.stroke();
+    if (r() > 0.5) { g.beginPath(); g.arc(x, y - 8, 3, 0, Math.PI * 2); g.fillStyle = '#f3ede0'; g.fill(); }
+  }
+  // corner medallions
+  for (const [x, y] of [[40, 40], [size - 40, 40], [40, size - 40], [size - 40, size - 40]]) {
+    g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.lineWidth = 2; g.stroke();
+  }
+  return toTexture(c);
+}
+
+// Pierced stone lattice (jali). Transparent holes; one tile per 1 x 1 UV.
+export function jaliTexture() {
+  const size = 128;
+  const [c, g] = canvas(size);
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, size, size);
+  g.globalCompositeOperation = 'destination-out';
+  const n = 4, s = size / n;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const cx = x * s + s / 2, cy = y * s + s / 2;
+    g.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      const rr = k % 2 ? s * 0.22 : s * 0.4;
+      g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+    }
+    g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+  g.strokeStyle = '#ffffff';
+  g.lineWidth = 6;
+  g.strokeRect(0, 0, size, size);
+  return toTexture(c);
+}
+
+// Facade atlas for the ordinary houses, 2 bays of 3 m x 3 m: [upper floor | ground floor].
+// Painted over the photo-scanned plaster so the wall itself is real texture.
+export function facadeAtlas(plasterImg) {
+  const W = 512, H = 256;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const r = rng(29);
+  for (const ox of [0, 256]) {
+    if (plasterImg) g.drawImage(plasterImg, ox, 0, 256, 256);
+    else { g.fillStyle = '#eee8dc'; g.fillRect(ox, 0, 256, 256); }
+  }
+  // brighten the plaster a touch so instance colours read as paint
+  g.fillStyle = 'rgba(255,255,255,0.18)';
+  g.fillRect(0, 0, W, H);
+  // floor band (chajja shadow line)
+  const band = (ox) => {
+    g.fillStyle = 'rgba(70,52,36,0.45)';
+    g.fillRect(ox, 0, 256, 9);
+    g.fillStyle = 'rgba(255,255,255,0.3)';
+    g.fillRect(ox, 9, 256, 3);
+  };
+  band(0); band(256);
+  // upper floor: tall arched window with green shutters and a sill
+  const wx = 84, wy = 60, ww = 88, wh = 140;
+  g.fillStyle = 'rgba(245,238,225,0.9)';
+  g.beginPath(); g.moveTo(wx - 9, wy + wh + 8); g.lineTo(wx - 9, wy + 32); g.quadraticCurveTo(wx + ww / 2, wy - 34, wx + ww + 9, wy + 32); g.lineTo(wx + ww + 9, wy + wh + 8); g.fill();
+  g.fillStyle = '#231a13';
+  g.beginPath(); g.moveTo(wx, wy + wh); g.lineTo(wx, wy + 36); g.quadraticCurveTo(wx + ww / 2, wy - 22, wx + ww, wy + 36); g.lineTo(wx + ww, wy + wh); g.fill();
+  g.fillStyle = '#4e7462';
+  g.fillRect(wx + 4, wy + 42, ww / 2 - 6, wh - 46);
+  g.fillStyle = '#446656';
+  g.fillRect(wx + ww / 2 + 2, wy + 42, ww / 2 - 6, wh - 46);
+  g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 2;
+  for (let y = wy + 52; y < wy + wh - 4; y += 9) { g.beginPath(); g.moveTo(wx + 6, y); g.lineTo(wx + ww - 6, y); g.stroke(); }
+  g.fillStyle = 'rgba(60,44,30,0.6)';
+  g.fillRect(wx - 14, wy + wh + 6, ww + 28, 8);
+  // iron balcony railing at the sill
+  g.strokeStyle = 'rgba(30,30,30,0.8)'; g.lineWidth = 2;
+  g.strokeRect(wx - 12, wy + wh - 26, ww + 24, 32);
+  for (let x = wx - 8; x < wx + ww + 12; x += 7) { g.beginPath(); g.moveTo(x, wy + wh - 26); g.lineTo(x, wy + wh + 6); g.stroke(); }
+  // grime streaks
+  for (let i = 0; i < 6; i++) {
+    const x = r() * 256, grd = g.createLinearGradient(0, 20, 0, 256);
+    grd.addColorStop(0, 'rgba(50,40,30,0.18)'); grd.addColorStop(1, 'rgba(50,40,30,0)');
+    g.fillStyle = grd; g.fillRect(x, 20, 3 + r() * 8, 236);
+  }
+  // ground floor: rolling shutter / shop opening with a lintel
+  const ox = 256;
+  g.fillStyle = 'rgba(70,52,36,0.5)';
+  g.fillRect(ox + 20, 40, 216, 14);
+  g.fillStyle = '#5d6670';
+  g.fillRect(ox + 24, 54, 208, 202);
+  g.fillStyle = 'rgba(255,255,255,0.12)';
+  for (let y = 58; y < 256; y += 8) g.fillRect(ox + 24, y, 208, 3);
+  g.fillStyle = 'rgba(0,0,0,0.3)';
+  g.fillRect(ox + 24, 54, 208, 10);
+  // dust at the base of the wall
+  const dust = g.createLinearGradient(0, 200, 0, 256);
+  dust.addColorStop(0, 'rgba(120,95,65,0)'); dust.addColorStop(1, 'rgba(120,95,65,0.45)');
+  g.fillStyle = dust; g.fillRect(0, 200, W, 56);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}

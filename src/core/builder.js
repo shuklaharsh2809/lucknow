@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { KEEP_UV, NO_SHADOW } from './materials.js';
+import { KEEP_UV, NO_SHADOW, TILE } from './materials.js';
 
-// World-space texture tile size in metres, per material key.
-const TILE = { stone: 4, stoneRed: 4, ground: 12, road: 10, grass: 5, brick: 5, plaster: 7, recess: 5 };
 
 const _m = new THREE.Matrix4();
 const _v = new THREE.Vector3();
+const _m2 = new THREE.Matrix4();
 
 function worldUV(g, tile) {
   const p = g.attributes.position.array, n = g.attributes.normal.array;
@@ -64,18 +63,23 @@ export class Builder {
     return geo;
   }
 
-  // Collider from local-space bounds; transformed corners give the world AABB.
+  // Collider from local-space bounds. Frames only ever turn about Y, so the box stays an
+  // oriented box in world space: centre, half extents and yaw are enough.
   collide(minX, minY, minZ, maxX, maxY, maxZ, local) {
     if (!this.physics) return;
-    let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
-    for (let i = 0; i < 8; i++) {
-      _v.set(i & 1 ? maxX : minX, i & 2 ? maxY : minY, i & 4 ? maxZ : minZ);
-      if (local) _v.applyMatrix4(local);
-      _v.applyMatrix4(this.matrix);
-      x0 = Math.min(x0, _v.x); y0 = Math.min(y0, _v.y); z0 = Math.min(z0, _v.z);
-      x1 = Math.max(x1, _v.x); y1 = Math.max(y1, _v.y); z1 = Math.max(z1, _v.z);
-    }
-    this.physics.addBox(x0, y0, z0, x1, y1, z1);
+    _m2.copy(this.matrix);
+    if (local) _m2.multiply(local);
+    _v.set((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2).applyMatrix4(_m2);
+    const e = _m2.elements;
+    const yaw = Math.atan2(e[8], e[0]);
+    const hy = (maxY - minY) / 2;
+    this.physics.addOBB(_v.x, _v.z, (maxX - minX) / 2, (maxZ - minZ) / 2, yaw, _v.y - hy, _v.y + hy);
+  }
+
+  // Current frame's world position and yaw (for registering pits and other world data).
+  frame() {
+    const e = this.matrix.elements;
+    return { x: e[12], y: e[13], z: e[14], yaw: Math.atan2(e[8], e[0]) };
   }
 
   // Box sitting on y (bottom), centred on x/z.

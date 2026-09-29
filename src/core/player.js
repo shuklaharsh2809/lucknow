@@ -77,8 +77,14 @@ export class Player {
     const dist = Math.hypot(this.vel.x, this.vel.z) * dt;
     const steps = Math.max(1, Math.ceil(dist / 0.25));
     for (let i = 0; i < steps; i++) {
+      const px = this.pos.x, pz = this.pos.z;
       this.pos.x += (this.vel.x * dt) / steps;
       this.pos.z += (this.vel.z * dt) / steps;
+      // the river and other no-go areas (unless flying over them)
+      if ((!this.flying || this.pos.y < 3) && this.physics.blocked(this.pos.x, this.pos.z)) {
+        this.pos.x = px; this.pos.z = pz;
+        this.vel.x *= 0.5; this.vel.z *= 0.5;
+      }
       this.physics.resolve(this.pos, RADIUS, this.pos.y, HEIGHT, this.onGround || this.flying ? STEP : 0.1);
       if (this.onGround && !this.flying) {
         // step up onto stairs and kerbs
@@ -111,8 +117,11 @@ export class Player {
     }
 
     // keep inside the world
-    this.pos.x = THREE.MathUtils.clamp(this.pos.x, -560, 560);
-    this.pos.z = THREE.MathUtils.clamp(this.pos.z, -560, 560);
+    const B = this.physics.bounds;
+    if (B) {
+      this.pos.x = THREE.MathUtils.clamp(this.pos.x, B[0], B[2]);
+      this.pos.z = THREE.MathUtils.clamp(this.pos.z, B[1], B[3]);
+    }
     this.pos.y = Math.min(this.pos.y, 400);
 
     // Head bob and footsteps

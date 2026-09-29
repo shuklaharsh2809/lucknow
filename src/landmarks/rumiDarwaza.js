@@ -1,85 +1,144 @@
 import * as THREE from 'three';
 import { Builder } from '../core/builder.js';
-import { arcadeWall, archPoints, chhatri, nicheRow, pinnacleRow, parapet, archPanel, pinnacle } from '../core/architecture.js';
+import { arcadeWall, archPoints, archPanel, archFrame, chhatri, nicheRow, parapet, finial } from '../core/architecture.js';
+import { rectPoly } from '../world/layout.js';
 
-// Rumi Darwaza (1784). Built in local space with the facade in XY and the passage along Z,
-// then turned so Husainabad Road runs straight through it.
-export function buildRumiDarwaza(M, physics, { x, z }) {
+// Rumi Darwaza (1784), modelled from photographs. Local frame: facade in XY, the passage
+// along Z, wings along X. Both faces are alike.
+export function buildRumiDarwaza(ctx, L) {
+  const { M, physics, scene } = ctx;
   const b = new Builder(M, physics);
-  b.push(x, 0, z, Math.PI / 2);
+  b.push(L.x, 0, L.z, L.yaw);
 
-  const W = 20, H = 17, FD = 1.5;
-  const big = { x: 0, w: 13, spring: 7, h: 16, cusps: 7 };
-  // The two great cusped frames, front and back
-  for (const fz of [3.75, -3.75]) {
-    arcadeWall(b, 'plaster', { width: W, height: H, depth: FD, arches: [big], z: fz });
-  }
-  // Recessed core with the actual passage
-  arcadeWall(b, 'plasterDS', { width: 13, height: H, depth: 3, arches: [{ x: 0, w: 8, spring: 6, h: 11 }] });
-  // Fill between frame piers
-  for (const s of [-1, 1]) b.box('plaster', 3.5, H, 6, s * 8.25, 0, 0, { collide: true });
-  // Half-domed hoods over each recess (the "Turkish gate" look)
-  for (const s of [1, -1]) {
-    const hood = new THREE.SphereGeometry(6.4, 28, 12, 0, Math.PI, 0, Math.PI / 2);
-    hood.scale(1, 1, 0.5);
-    if (s < 0) hood.rotateY(Math.PI);
-    b.geo('plasterDS', hood, 0, 9.4, s * 1.5);
-    // arched openings high in the recess
-    b.push(0, 0, s * 1.52, s > 0 ? 0 : Math.PI);
-    nicheRow(b, 'shadowRecess', { x0: -4.5, x1: 4.5, y: 11.6, z: 0, count: 3, w: 1.6, spring: 1.4, h: 2.6 });
+  // plaza of brick paving on both sides
+  b.box('brickpave', 96, 0.06, 120, 0, 0, 0);
+
+  // ---- the great pointed frame, crowned with buds ----
+  const OW = 24, OS = 11, OH = 19.5; // outer silhouette
+  const IW = 14, IS = 9.5, IH = 16.2; // cusped inner opening
+  const outer = archPoints(OW, OS, OH, { seg: 30 });
+  const inner = archPoints(IW, IS, IH, { cusps: 7, seg: 30 }).reverse();
+  const frameShape = new THREE.Shape([...outer, ...inner]);
+  for (const fz of [4.5, -4.5]) {
+    const g = new THREE.ExtrudeGeometry(frameShape, { depth: 1.5, bevelEnabled: false, curveSegments: 2 });
+    g.translate(0, 0, fz - 0.75);
+    b.add('plaster', g);
+    for (const s of [-1, 1]) b.collide(s > 0 ? IW / 2 : -OW / 2, 0, fz - 0.75, s > 0 ? OW / 2 : -IW / 2, OS, fz + 0.75);
+    b.collide(-IW / 2, IH * 0.92, fz - 0.75, IW / 2, OH, fz + 0.75);
+    // carved borders: an outer band and a band around the cusped opening
+    const face = fz > 0 ? 1 : -1;
+    b.push(0, 0, fz + face * 0.76, face > 0 ? 0 : Math.PI);
+    archFrame(b, 'trim', 0, 0, 0, OW - 1.6, OS, OH - 0.8, { band: 0.8, depth: 0.08 });
+    archFrame(b, 'trim', 0, 0, 0, IW, IS, IH, { cusps: 7, band: 0.9, depth: 0.1 });
+    archFrame(b, 'weathered', 0, 0, 0.05, IW + 1.8, IS, IH + 0.9, { band: 1.4, depth: 0.06 });
     b.pop();
-  }
-
-  // Flower buds studding the great arch outline
-  const outline = archPoints(big.w, big.spring, big.h, { cusps: big.cusps, seg: 28 });
-  const bud = new THREE.SphereGeometry(0.32, 8, 6);
-  bud.scale(1, 1.5, 1);
-  for (const s of [1, -1]) {
-    for (let i = 2; i < outline.length - 2; i += 2) {
-      const p = outline[i];
-      const nx = p.x * 1.07, ny = p.y + (p.y > big.spring ? 0.55 : 0);
-      b.geo('trim', bud.clone(), nx + (p.x > 0 ? 0.5 : -0.5), ny, s * (3.75 + FD / 2 + 0.2));
+    // the crest: a flame-like row of buds bristling from the outline above the springing
+    for (let i = 2; i < outer.length - 2; i++) {
+      const p = outer[i], q = outer[i + 1];
+      if (p.y < OS - 0.5) continue;
+      const tx = q.x - p.x, ty = q.y - p.y, l = Math.hypot(tx, ty) || 1;
+      const nx = -ty / l, ny = tx / l; // outward normal of the (clockwise) outline
+      const cone = new THREE.ConeGeometry(0.28, 1.6, 6);
+      cone.translate(0, 0.8, 0);
+      const ang = Math.atan2(nx, ny) * -1;
+      b.geo('weathered', cone, p.x, p.y, fz, { rz: ang, rx: face * 0.35 });
+      b.geo('weathered', new THREE.SphereGeometry(0.34, 8, 6), p.x + nx * 0.25, p.y + ny * 0.25, fz);
     }
-    // blind niches on the piers
-    b.push(0, 0, s * (3.75 + FD / 2), s > 0 ? 0 : Math.PI);
-    for (const px of [-8.25, 8.25]) {
-      archPanel(b, 'recess', px, 1.2, 0, 2, 2.2, 3.6, { cusps: 3 });
-      archPanel(b, 'recess', px, 6.2, 0, 1.8, 2.0, 3.2, { cusps: 3 });
-      archPanel(b, 'recess', px, 11, 0, 1.6, 1.6, 2.8);
-    }
-    b.pop();
   }
+  // side piers between the frames
+  for (const s of [-1, 1]) b.box('plaster', OW / 2 - IW / 2, OS + 2, 7.5, s * (IW / 2 + (OW / 2 - IW / 2) / 2), 0, 0, { collide: true });
 
-  // Crown: parapet, pinnacles, octagonal lantern pavilion
-  b.box('trim', W + 0.6, 0.5, 9.2, 0, H, 0);
-  pinnacleRow(b, 'plaster', { x0: -9.6, x1: 9.6, y: H + 0.5, z: 4.3, spacing: 2.4, h: 2.4, r: 0.22 });
-  pinnacleRow(b, 'plaster', { x0: -9.6, x1: 9.6, y: H + 0.5, z: -4.3, spacing: 2.4, h: 2.4, r: 0.22 });
-  b.cyl('plaster', 3.1, 3.4, 1.6, 0, H + 0.5, 0, { seg: 8 });
-  chhatri(b, 'plaster', 0, H + 2.1, 0, 2.7, { cols: 8, h: 3.6 });
-
-  // Stepped wings with tiers of niches, ending in octagonal towers
-  for (const s of [-1, 1]) {
-    const x0 = s * 10, x1 = s * 29;
-    const cx = (x0 + x1) / 2, len = Math.abs(x1 - x0);
-    b.box('plaster', len, 11, 4, cx, 0, 0, { collide: true });
-    b.box('plaster', len * 0.55, 3, 4, s * 10 + s * len * 0.275, 11, 0, { collide: true });
-    for (const fz of [2.01, -2.01]) {
-      b.push(0, 0, fz, fz > 0 ? 0 : Math.PI);
-      const lx0 = Math.min(x0, x1) * (fz > 0 ? 1 : -1), lx1 = Math.max(x0, x1) * (fz > 0 ? 1 : -1);
-      nicheRow(b, 'recess', { x0: Math.min(lx0, lx1) + 0.5, x1: Math.max(lx0, lx1) - 0.5, y: 0.8, z: 0, count: 6, w: 1.7, spring: 2.2, h: 3.4, cusps: 3 });
-      nicheRow(b, 'shadowRecess', { x0: Math.min(lx0, lx1) + 0.5, x1: Math.max(lx0, lx1) - 0.5, y: 5.4, z: 0, count: 6, w: 1.4, spring: 1.8, h: 2.8 });
+  // ---- the half-octagon recess on each face, with three arches and a semi-dome ----
+  const CZ = 1.3; // core faces at z = +/-CZ
+  arcadeWall(b, 'plasterDS', { width: 9.4, height: IH, depth: CZ * 2, arches: [{ x: 0, w: 4.4, spring: 4.2, h: 7.6, cusps: 5 }] });
+  for (const face of [1, -1]) {
+    b.push(0, 0, 0, face > 0 ? 0 : Math.PI);
+    // splayed side walls of the recess
+    for (const s of [-1, 1]) {
+      // run inner->outer on the right, outer->inner on the left so local +Z faces into the recess
+      const ax = s > 0 ? 4.7 : -IW / 2, az = s > 0 ? CZ : 3.8, bx = s > 0 ? IW / 2 : -4.7, bz = s > 0 ? 3.8 : CZ;
+      const len = Math.hypot(bx - ax, bz - az), ang = Math.atan2(-(bz - az), bx - ax);
+      b.push((ax + bx) / 2, 0, (az + bz) / 2, ang);
+      b.box('plasterDS', len, IH, 0.7, 0, 0, -0.35, { collide: true });
+      archPanel(b, 'shadowRecess', 0, 0, 0.01, 2.2, 3.4, 5.6, { cusps: 5, depth: 0.04 });
+      archFrame(b, 'trim', 0, 0, 0.02, 2.2, 3.4, 5.6, { cusps: 5, band: 0.35, depth: 0.05 });
+      nicheRow(b, 'recess', { x0: -len / 2 + 0.2, x1: len / 2 - 0.2, y: 9, z: 0.02, count: 1, w: 1.5, spring: 1.6, h: 2.6, cusps: 3 });
       b.pop();
     }
-    b.box('trim', len + 0.4, 0.35, 4.6, cx, 11, 0);
-    parapet(b, 'plaster', { x0: Math.min(x0, x1), x1: Math.max(x0, x1), y: 11.35, z: 1.9, t: 0.3, h: 0.6, collide: false });
-    parapet(b, 'plaster', { x0: Math.min(x0, x1), x1: Math.max(x0, x1), y: 11.35, z: -1.9, t: 0.3, h: 0.6, collide: false });
-    pinnacle(b, 'plaster', s * 15, 14, 1.6, 2, 0.2);
-    pinnacle(b, 'plaster', s * 15, 14, -1.6, 2, 0.2);
-    // end tower
-    b.cyl('plaster', 2.1, 2.4, 13, s * 31, 0, 0, { seg: 8, collide: true });
-    b.cyl('trim', 2.6, 2.6, 0.4, s * 31, 13, 0, { seg: 8 });
-    chhatri(b, 'plaster', s * 31, 13.4, 0, 1.6, { cols: 8 });
+    b.push(0, 0, CZ + 0.01);
+    archFrame(b, 'trim', 0, 0, 0, 4.4, 4.2, 7.6, { cusps: 5, band: 0.45, depth: 0.06 });
+    nicheRow(b, 'recess', { x0: -4.4, x1: 4.4, y: 8.6, z: 0.02, count: 4, w: 1.4, spring: 1.6, h: 2.8, cusps: 3 });
+    nicheRow(b, 'shadowRecess', { x0: -4.4, x1: 4.4, y: 9.2, z: 0.05, count: 4, w: 0.45, spring: 0.8, h: 1.2 });
+    b.box('trim', 9.4, 0.25, 0.3, 0, 8.2, 0.15);
+    b.pop();
+    // semi-dome hood
+    const hood = new THREE.SphereGeometry(6.6, 28, 12, 0, Math.PI, 0, Math.PI / 2);
+    hood.scale(1, 0.62, 0.5);
+    b.geo('plasterDS', hood, 0, 12.2, CZ);
+    b.pop();
+  }
+  // roof over the core, hidden behind the crest
+  b.box('plaster', IW + 1, 1.2, 7.6, 0, IH - 0.2, 0);
+
+  // ---- slender flanking minarets and the lantern on the apex ----
+  for (const s of [-1, 1]) {
+    for (const fz of [4.2, -4.2]) {
+      const x = s * (OW / 2 + 0.7);
+      b.cyl('weathered', 0.85, 1, 20.5, x, 0, fz, { seg: 8, collide: true });
+      for (const y of [7, 11.5, 16]) b.cyl('trim', 1.12, 1.12, 0.3, x, y, fz, { seg: 8 });
+      b.cyl('weathered', 1.2, 1.05, 0.5, x, 20.5, fz, { seg: 8 });
+      chhatri(b, 'weathered', x, 21, fz, 0.9, { cols: 6, h: 1.8 });
+    }
+  }
+  b.cyl('weathered', 1.5, 1.8, 1.4, 0, OH - 0.6, 0, { seg: 8 });
+  chhatri(b, 'weathered', 0, OH + 0.8, 0, 1.45, { cols: 8, h: 2.2 });
+
+  // ---- two-storey wings: arcade below, open gallery above, merlons on top ----
+  const WX0 = OW / 2 + 1.8, WX1 = 34, WD = 5.2, G = 7, U = 4.6;
+  for (const s of [-1, 1]) {
+    const len = WX1 - WX0, cx = s * (WX0 + len / 2);
+    const n = 6;
+    const lower = [], upper = [];
+    for (let i = 0; i < n; i++) lower.push({ x: -len / 2 + (len / n) * (i + 0.5), w: 2.7, spring: 3.4, h: 5.6, cusps: 3 });
+    for (let i = 0; i < n * 2; i++) upper.push({ x: -len / 2 + (len / (n * 2)) * (i + 0.5), y0: G + 0.6, w: 1.1, spring: 2, h: 3 });
+    for (const fz of [WD / 2, -WD / 2]) {
+      arcadeWall(b, 'weathered', { width: len, height: G + U, depth: 0.8, arches: [...upper], x: cx, z: fz });
+      b.push(cx, 0, fz + (fz > 0 ? 0.41 : -0.41), fz > 0 ? 0 : Math.PI);
+      for (const a of lower) {
+        archPanel(b, 'shadowRecess', a.x, 0, 0, a.w, a.spring, a.h, { cusps: 3, depth: 0.05 });
+        archFrame(b, 'plaster', a.x, 0, 0.01, a.w, a.spring, a.h, { cusps: 3, band: 0.35, depth: 0.06 });
+      }
+      b.box('trim', len, 0.3, 0.35, 0, G, 0.1);
+      b.pop();
+    }
+    b.box('weathered', len, G, WD - 1.6, cx, 0, 0, { collide: true });
+    b.box('recess', len, 0.2, WD, cx, G, 0);
+    b.box('weathered', len + 0.4, 0.4, WD + 0.4, cx, G + U, 0, { collide: true });
+    for (const fz of [WD / 2, -WD / 2]) parapet(b, 'weathered', { x0: cx - len / 2, x1: cx + len / 2, y: G + U + 0.4, z: fz, t: 0.3, h: 0.5, collide: false });
+    // end pavilions
+    const px = s * (WX1 + 3);
+    b.box('weathered', 6, G + U + 1.6, 7.4, px, 0, 0, { collide: true });
+    for (const fz of [3.71, -3.71]) {
+      b.push(px, 0, fz, fz > 0 ? 0 : Math.PI);
+      archPanel(b, 'shadowRecess', 0, 0, 0, 2.6, 3.4, 5.6, { cusps: 3 });
+      archFrame(b, 'plaster', 0, 0, 0.01, 2.6, 3.4, 5.6, { cusps: 3, band: 0.35 });
+      nicheRow(b, 'shadowRecess', { x0: -2.4, x1: 2.4, y: G + 0.8, z: 0, count: 3, w: 1, spring: 2, h: 3.2 });
+      b.pop();
+    }
+    b.push(px + s * 3.01, 0, 0, s * Math.PI / 2);
+    nicheRow(b, 'shadowRecess', { x0: -3, x1: 3, y: 0, z: 0, count: 2, w: 2.2, spring: 3.2, h: 5.2, cusps: 3 });
+    nicheRow(b, 'shadowRecess', { x0: -3, x1: 3, y: G + 0.8, z: 0, count: 3, w: 1, spring: 2, h: 3.2 });
+    b.pop();
+    b.box('trim', 6.6, 0.35, 8, px, G + U + 1.6, 0);
+    parapet(b, 'weathered', { x0: px - 3, x1: px + 3, y: G + U + 1.95, z: 3.6, t: 0.3, h: 0.6, collide: false });
+    parapet(b, 'weathered', { x0: px - 3, x1: px + 3, y: G + U + 1.95, z: -3.6, t: 0.3, h: 0.6, collide: false });
+    for (const [dx, dz] of [[-2.7, 3.4], [2.7, 3.4], [-2.7, -3.4], [2.7, -3.4]]) {
+      b.cyl('weathered', 0.28, 0.32, 1.6, px + dx, G + U + 1.95, dz, { seg: 8 });
+      finial(b, 'weathered', px + dx, G + U + 3.5, dz, 0.8);
+    }
   }
   b.pop();
-  return b.build('Rumi Darwaza');
+  scene.add(b.build('Rumi Darwaza'));
+  (ctx.reserved ||= []).push(rectPoly(L, 0, 0, 100, 130));
+  (ctx.footprints ||= []).push({ p: rectPoly(L, 0, 0, 80, 7), color: '#8f6f4c' });
 }

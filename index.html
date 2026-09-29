@@ -16,10 +16,10 @@
 
     <div id="intro">
       <div class="intro-inner">
-        <div class="eyebrow">An evening in Lucknow</div>
+        <div class="eyebrow">Old Lucknow, morning to night</div>
         <h1>Shaam-e-Awadh</h1>
         <div class="native"><span lang="hi">शाम-ए-अवध</span> · <span lang="ur" class="urdu">شامِ اودھ</span></div>
-        <p class="lede">Walk the old city of the Nawabs at golden hour, from the Bara Imambara and Rumi Darwaza to the Clock Tower, Chota Imambara and the lanes of Chowk.</p>
+        <p class="lede">Walk the real streets of old Lucknow, from the Bara Imambara and Rumi Darwaza to the Clock Tower, Chota Imambara and the lanes of Chowk.</p>
         <div class="progress"><div id="progress-bar"></div></div>
         <button id="enter" disabled>Building the city…</button>
         <div class="controls-help desktop-only">
@@ -29,6 +29,7 @@
           <span><kbd>F</kbd> fly</span>
           <span><kbd>1</kbd>–<kbd>5</kbd> places</span>
           <span><kbd>M</kbd> map</span>
+          <span><kbd>T</kbd> time of day</span>
           <span><kbd>Esc</kbd> release mouse</span>
         </div>
         <div class="controls-help touch-only">
@@ -49,6 +50,7 @@
           <button data-q="medium">Med</button>
           <button data-q="low">Low</button>
         </div>
+        <button id="time" class="pill" title="Time of day (T)">Morning</button>
         <button id="sound" class="icon" title="Sound (N)" aria-label="Toggle sound">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4z"/><path id="sound-waves" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>
         </button>
@@ -66,6 +68,8 @@
     <canvas id="minimap" class="hidden" width="360" height="360"></canvas>
     <div id="crosshair" class="hidden"></div>
     <div id="hint" class="hidden">Click to look around</div>
+    <div id="tiles-status" class="hidden">Streaming Lucknow…</div>
+    <div id="attrib">Map data © OpenStreetMap contributors · Textures: Poly Haven (CC0)</div>
     <div id="fly-badge" class="hidden">Flying · <kbd>Space</kbd>/<kbd>C</kbd> up/down · <kbd>F</kbd> to land</div>
 
     <div id="stick"><div id="stick-knob"></div></div>

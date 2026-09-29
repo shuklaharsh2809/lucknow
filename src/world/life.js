@@ -1,14 +1,35 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng, smokeSpriteTexture } from '../core/textures.js';
-import { ROAD, SITES } from './layout.js';
-import { leafUniform } from './city.js';
+import { PLACES, BAZAAR, BARA, CHOTA, TANK, toWorld } from './layout.js';
+import { MAP } from './osmCity.js';
+
+// Polyline helper: position and heading at distance `d` along a flat [x, z, ...] line.
+function polyline(flat) {
+  const cum = [0];
+  for (let k = 2; k < flat.length; k += 2) cum.push(cum[cum.length - 1] + Math.hypot(flat[k] - flat[k - 2], flat[k + 1] - flat[k - 1]));
+  const total = cum[cum.length - 1];
+  return {
+    total,
+    at(d, out) {
+      d = Math.max(0, Math.min(total, d));
+      let i = 1;
+      while (i < cum.length - 1 && cum[i] < d) i++;
+      const t = (d - cum[i - 1]) / ((cum[i] - cum[i - 1]) || 1);
+      const ax = flat[(i - 1) * 2], az = flat[(i - 1) * 2 + 1], bx = flat[i * 2], bz = flat[i * 2 + 1];
+      out.x = ax + (bx - ax) * t; out.z = az + (bz - az) * t;
+      out.dx = bx - ax; out.dz = bz - az;
+      return out;
+    },
+  };
+}
 
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _p = new THREE.Vector3();
 const _s = new THREE.Vector3();
+const _at = { x: 0, z: 0, dx: 1, dz: 0 };
 
 const KURTA = ['#f4efe4', '#f4efe4', '#e9e2d0', '#c8d6e0', '#e3c9a0', '#b7412e', '#2f4f7a', '#6a8a4a', '#d98a3a', '#8a3a5a', '#3a3a3a', '#d4b0c8', '#f0d890'];
 const SKIN = ['#8d5a3b', '#a36a45', '#7a4a30', '#b57d57', '#6a3f28', '#c08a62'];
@@ -16,15 +37,15 @@ const SKIN = ['#8d5a3b', '#a36a45', '#7a4a30', '#b57d57', '#6a3f28', '#c08a62'];
 function personGeos() {
   const nonIdx = (g) => (g.index ? g.toNonIndexed() : g);
   const body = mergeGeometries([
-    new THREE.CylinderGeometry(0.075, 0.07, 0.78, 6).translate(-0.1, 0.39, 0),
-    new THREE.CylinderGeometry(0.075, 0.07, 0.78, 6).translate(0.1, 0.39, 0),
-    new THREE.CylinderGeometry(0.2, 0.29, 0.92, 10).translate(0, 1.05, 0),
-    new THREE.CylinderGeometry(0.055, 0.05, 0.62, 5).translate(-0.25, 1.12, 0).rotateZ(0.0),
-    new THREE.CylinderGeometry(0.055, 0.05, 0.62, 5).translate(0.25, 1.12, 0),
-    new THREE.SphereGeometry(0.2, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.5, 0.8).translate(0, 1.5, 0),
+    new THREE.CylinderGeometry(0.075, 0.07, 0.78, 4, 1, true).translate(-0.1, 0.39, 0),
+    new THREE.CylinderGeometry(0.075, 0.07, 0.78, 4, 1, true).translate(0.1, 0.39, 0),
+    new THREE.CylinderGeometry(0.2, 0.29, 0.92, 7).translate(0, 1.05, 0),
+    new THREE.CylinderGeometry(0.055, 0.05, 0.62, 4, 1, true).translate(-0.25, 1.12, 0),
+    new THREE.CylinderGeometry(0.055, 0.05, 0.62, 4, 1, true).translate(0.25, 1.12, 0),
+    new THREE.SphereGeometry(0.2, 7, 3, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.5, 0.8).translate(0, 1.5, 0),
   ].map(nonIdx));
-  const head = new THREE.SphereGeometry(0.12, 10, 8).scale(0.9, 1.05, 0.95).translate(0, 1.66, 0);
-  const cap = new THREE.CylinderGeometry(0.1, 0.11, 0.08, 10).translate(0, 1.77, 0);
+  const head = new THREE.SphereGeometry(0.12, 7, 5).scale(0.9, 1.05, 0.95).translate(0, 1.66, 0);
+  const cap = new THREE.CylinderGeometry(0.1, 0.11, 0.08, 7).translate(0, 1.77, 0);
   return { body, head, cap };
 }
 
@@ -97,17 +118,34 @@ export function buildLife(ctx) {
 
   // ---------- people ----------
   const paths = (ctx.paths ||= []);
-  for (const s of [-1, 1]) {
-    paths.push({ a: [ROAD.x0 + 20, s * 8.8], b: [-48, s * 8.8], n: 12 });
-    paths.push({ a: [-8, s * 8.8], b: [ROAD.x1 - 20, s * 8.8], n: 34 });
+  // people walking the real streets near each place and all through the bazaar lanes
+  const hubs = [...PLACES.map((p) => ({ x: p.center[0], z: p.center[1], r: 230, k: 0.08 })), { x: BAZAAR.x, z: BAZAAR.z, r: BAZAAR.r + 20, k: 0.22 }];
+  for (const road of MAP.roads) {
+    const p = road.p;
+    for (let k = 0; k + 3 < p.length; k += 2) {
+      const ax = p[k], az = p[k + 1], bx = p[k + 2], bz = p[k + 3];
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2, L = Math.hypot(bx - ax, bz - az);
+      if (L < 6) continue;
+      let dens = 0;
+      for (const h of hubs) if (Math.hypot(mx - h.x, mz - h.z) < h.r) dens = Math.max(dens, h.k);
+      if (!dens) continue;
+      const n = Math.floor(L * dens * (0.6 + r() * 0.8));
+      const off = road.w / 2 - 0.9;
+      const nx = -(bz - az) / L, nz = (bx - ax) / L;
+      if (n > 0) paths.push({ a: [ax + nx * off, az + nz * off], b: [bx + nx * off, bz + nz * off], n: Math.ceil(n / 2) });
+      if (n > 1) paths.push({ a: [ax - nx * off, az - nz * off], b: [bx - nx * off, bz - nz * off], n: Math.floor(n / 2) });
+    }
   }
-  paths.push({ a: [-60, -236], b: [60, -236], n: 10 }, { a: [-200, -237], b: [-90, -237], n: 6 });
   const walkers = [];
+  // keep the crowd to a budget the GPU and CPU are happy with
+  const total = paths.reduce((a, p) => a + p.n, 0);
+  const keep = Math.min(1, 560 / Math.max(1, total));
   for (const p of paths) {
-    for (let i = 0; i < p.n; i++) {
+    const n = Math.floor(p.n * keep + r());
+    for (let i = 0; i < n; i++) {
       const ax = p.a[0], az = p.a[1], bx = p.b[0], bz = p.b[1];
       const len = Math.hypot(bx - ax, bz - az);
-      const side = (r() - 0.5) * 1.6;
+      const side = (r() - 0.5) * 1.2;
       const nx = -(bz - az) / len, nz = (bx - ax) / len;
       walkers.push({
         ax: ax + nx * side, az: az + nz * side, bx: bx + nx * side, bz: bz + nz * side, len,
@@ -116,11 +154,16 @@ export function buildLife(ctx) {
       });
     }
   }
-  // cycle-rickshaws and e-rickshaws on Husainabad Road (they keep left)
+  // cycle-rickshaws on the real main roads, keeping left, turning back at the ends
   const riders = [];
-  for (let i = 0; i < 22; i++) {
-    const east = i % 2 === 0;
-    riders.push({ x: ROAD.x0 + r() * (ROAD.x1 - ROAD.x0), z: east ? -2.4 : 2.4, dir: east ? 1 : -1, speed: 2.6 + r() * 2.2, bob: r() * 10 });
+  const routes = MAP.roads.filter((rd) => ['primary', 'secondary', 'tertiary', 'residential'].includes(rd.k)).map((rd) => ({ rd, pl: polyline(rd.p) })).filter((q) => q.pl.total > 120);
+  const weight = routes.map((q) => q.pl.total * (q.rd.k === 'residential' ? 0.3 : 1));
+  const wsum = weight.reduce((a, c) => a + c, 0);
+  for (let i = 0; i < 60 && routes.length; i++) {
+    let pick = r() * wsum, j = 0;
+    while (pick > weight[j] && j < routes.length - 1) pick -= weight[j++];
+    const q = routes[j];
+    riders.push({ pl: q.pl, lane: Math.min(2.2, q.rd.w / 2 - 0.9), d: r() * q.pl.total, dir: r() > 0.5 ? 1 : -1, speed: 2.4 + r() * 2.4, bob: r() * 10, x: 0, z: 0 });
   }
   const pg = personGeos();
   const nP = walkers.length + riders.length;
@@ -158,7 +201,8 @@ export function buildLife(ctx) {
   const KITE = ['#e63946', '#f4a261', '#2a9d8f', '#e9c46a', '#8338ec', '#ff006e', '#3a86ff', '#fb5607', '#ffffff', '#06d6a0'];
   const kites = [];
   for (let i = 0; i < 70; i++) {
-    const ax = -300 + r() * 620, az = -220 + r() * 480;
+    const hub = PLACES[i % PLACES.length].center;
+    const ax = hub[0] + (r() - 0.5) * 500, az = hub[1] + (r() - 0.5) * 500;
     kites.push({ ax, az, h: 32 + r() * 55, phase: r() * 10, drift: 8 + r() * 14, sx: ax + (r() - 0.5) * 60, sz: az + 30 + r() * 40, sy: 9 + r() * 4 });
   }
   const kiteMesh = new THREE.InstancedMesh(kiteAll, new THREE.MeshStandardMaterial({ color: '#ffffff', side: THREE.DoubleSide, roughness: 0.8, emissive: '#331a0a', emissiveIntensity: 0.3 }), kites.length);
@@ -181,11 +225,13 @@ export function buildLife(ctx) {
     0, 0, 0.18, 0, 0, -0.1, 0.36, 0.0, -0.06,
   ], 3));
   birdGeo.computeVertexNormals();
+  const fl = (L, x, z) => toWorld(L, x, z);
   const flocks = [
-    { cx: -115, cz: -110, y: 42, r: 55, n: 34, speed: 0.22 },
-    { cx: 218, cz: -120, y: 48, r: 45, n: 28, speed: -0.26 },
-    { cx: 30, cz: 110, y: 35, r: 38, n: 30, speed: 0.3 },
-  ];
+    { c: fl(BARA, 0, 60), y: 42, r: 55, n: 34, speed: 0.22 },
+    { c: fl(CHOTA, 0, 30), y: 46, r: 45, n: 28, speed: -0.26 },
+    { c: [TANK.x, TANK.z], y: 38, r: 40, n: 24, speed: 0.28 },
+    { c: [BAZAAR.x, BAZAAR.z], y: 32, r: 38, n: 26, speed: -0.3 },
+  ].map((f) => ({ ...f, cx: f.c[0], cz: f.c[1] }));
   const birds = [];
   for (const f of flocks) for (let i = 0; i < f.n; i++) birds.push({ f, a: r() * 0.9, dr: (r() - 0.5) * 14, dy: (r() - 0.5) * 8, ph: r() * 10 });
   const birdMesh = new THREE.InstancedMesh(birdGeo, new THREE.MeshStandardMaterial({ color: '#3b3a40', side: THREE.DoubleSide, roughness: 1 }), birds.length);
@@ -222,7 +268,6 @@ export function buildLife(ctx) {
 
   ctx.updatables.push({
     update(t, dt) {
-      leafUniform.value = t;
       // walkers
       for (let i = 0; i < walkers.length; i++) {
         const w = walkers[i];
@@ -239,20 +284,23 @@ export function buildLife(ctx) {
         caps.setMatrixAt(i, _m);
       }
       // rickshaws + riders
-      const span = ROAD.x1 - ROAD.x0;
       for (let k = 0; k < riders.length; k++) {
         const rd = riders[k];
-        rd.x += rd.dir * rd.speed * dt;
-        if (rd.x > ROAD.x1) rd.x -= span;
-        if (rd.x < ROAD.x0) rd.x += span;
-        const yaw = rd.dir > 0 ? 0 : Math.PI;
+        rd.d += rd.dir * rd.speed * dt;
+        if (rd.d > rd.pl.total) { rd.d = rd.pl.total; rd.dir = -1; }
+        if (rd.d < 0) { rd.d = 0; rd.dir = 1; }
+        const at = rd.pl.at(rd.d, _at);
+        const l = Math.hypot(at.dx, at.dz) || 1;
+        const fx = (at.dx / l) * rd.dir, fz = (at.dz / l) * rd.dir;
+        // keep left: left of heading (fx, fz) is (fz, -fx)
+        rd.x = at.x + fz * rd.lane; rd.z = at.z - fx * rd.lane;
+        const yaw = Math.atan2(-fz, fx);
         _q.setFromAxisAngle(_p.set(0, 1, 0), yaw);
         _m.compose(_p.set(rd.x, 0, rd.z), _q, _s.set(1, 1, 1));
         frames.setMatrixAt(k, _m);
         canopies.setMatrixAt(k, _m);
         const i = walkers.length + k;
-        const off = rd.dir * 0.55;
-        ped(i, rd.x + off, 0.35, rd.z, yaw, t * 6 + rd.bob, 0.95);
+        ped(i, rd.x + fx * 0.55, 0.35, rd.z + fz * 0.55, yaw, t * 6 + rd.bob, 0.95);
         _m.compose(_p.set(0, -50, 0), _q, _s.set(1, 1, 1));
         caps.setMatrixAt(i, _m);
       }

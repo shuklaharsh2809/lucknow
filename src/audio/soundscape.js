@@ -1,4 +1,3 @@
-import { SITES } from '../world/layout.js';
 
 // Everything here is synthesised with Web Audio: no audio files to download.
 export class Soundscape {
@@ -217,14 +216,14 @@ export class Soundscape {
     if (!this.ctx || !this.on) return;
     const p = player.pos;
     const now = this.ctx.currentTime;
-    const c = SITES.chowk;
-    const dBazaar = Math.hypot(Math.max(0, Math.abs(p.x - c.x) - 6), Math.max(0, c.z0 - p.z, p.z - c.z1));
-    const dRoad = Math.abs(p.z);
+    // `ctx.zones` says where the bazaar crowd, the water and the clock tower are.
+    const Z = ctx.zones;
+    const dBazaar = Math.max(0, Math.hypot(p.x - Z.bazaar.x, p.z - Z.bazaar.z) - Z.bazaar.r);
+    const dRoad = 15;
     const crowd = 0.5 * Math.exp(-dBazaar / 25) + 0.14 * Math.exp(-dRoad / 30);
-    const high = Math.max(0, p.y - 4);
+    const high = Math.max(0, p.y - (Z?.groundY ?? 0) - 4);
     this.crowd.gain.gain.setTargetAtTime(crowd * Math.exp(-high / 30), now, 0.4);
-    const t = SITES.tank;
-    const dWater = Math.min(Math.abs(p.z - (SITES.river.z0 + SITES.river.z1) / 2) - 30, Math.hypot(p.x - t.x, p.z - t.z) - 20);
+    const dWater = Math.min(...Z.water.map((w) => Math.hypot(p.x - w.x, p.z - w.z) - w.r));
     this.water.gain.gain.setTargetAtTime(0.09 * Math.exp(-Math.max(0, dWater) / 18), now, 0.5);
     this.wind.gain.gain.setTargetAtTime(Math.min(0.28, 0.02 + high * 0.004 + (player.flying ? player.speed * 0.004 : 0)), now, 0.5);
     this.hum.gain.gain.setTargetAtTime(0.2 * Math.exp(-high / 80), now, 0.5);
@@ -248,7 +247,7 @@ export class Soundscape {
     const mins = ctx.gameMinutes?.() ?? 0;
     const quarter = Math.floor(mins / 15);
     if (this.lastQuarter !== null && quarter !== this.lastQuarter) {
-      const ct = SITES.clockTower;
+      const ct = Z.clock;
       const d = Math.hypot(p.x - ct.x, p.z - ct.z);
       const onHour = quarter % 4 === 0;
       const hour = Math.floor(mins / 60) % 12 || 12;

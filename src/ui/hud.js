@@ -1,17 +1,20 @@
-import { PLACES, ROAD, SITES } from '../world/layout.js';
+import { PLACES } from '../world/layout.js';
 
 const $ = (id) => document.getElementById(id);
 
 export class HUD {
-  constructor({ footprints, onTeleport }) {
-    this.footprints = footprints;
+  constructor({ onTeleport, places = PLACES, streetName = null, paint = null, bounds = null }) {
+    this.paint = paint;
+    this.bounds = bounds;
+    this.places = places;
+    this.streetNameFn = streetName;
     this.onTeleport = onTeleport;
     this.current = null;
     this.cardTimer = 0;
     this.mapOn = true;
 
     const bar = $('places');
-    PLACES.forEach((p, i) => {
+    places.forEach((p, i) => {
       const btn = document.createElement('button');
       btn.innerHTML = `<span>${i + 1}</span><em class="label" style="font-style:normal">${p.name}</em>`;
       btn.addEventListener('click', (e) => { e.stopPropagation(); onTeleport(i); });
@@ -38,7 +41,7 @@ export class HUD {
   }
 
   showCard(i, hold = 9) {
-    const p = PLACES[i];
+    const p = this.places[i];
     $('card-year').textContent = p.year;
     $('card-title').textContent = p.name;
     $('card-native').textContent = p.local;
@@ -51,13 +54,13 @@ export class HUD {
   update(dt, pos, yaw, clockText) {
     $('clock').textContent = clockText;
     let here = -1, best = Infinity;
-    PLACES.forEach((p, i) => {
+    this.places.forEach((p, i) => {
       const d = Math.hypot(pos.x - p.center[0], pos.z - p.center[1]);
       if (d < p.radius && d / p.radius < best) { best = d / p.radius; here = i; }
     });
     if (here !== this.current) {
       this.current = here;
-      $('place-name').textContent = here >= 0 ? PLACES[here].name : this._streetName(pos);
+      $('place-name').textContent = here >= 0 ? this.places[here].name : this._streetName(pos);
       this.buttons.forEach((b, i) => b.classList.toggle('here', i === here));
       if (here >= 0) this.showCard(here);
     }
@@ -65,42 +68,32 @@ export class HUD {
       this.cardTimer -= dt;
       if (this.cardTimer <= 0) $('card').classList.remove('show');
     }
-    if (this.mapOn && this.base) this._drawMap(pos, yaw);
+    if (this.mapOn) this._drawMap(pos, yaw);
   }
 
   _streetName(pos) {
-    if (Math.abs(pos.z) < 12) return 'Husainabad Road';
-    if (pos.z < -230) return 'Gomti riverfront';
+    if (this.streetNameFn) return this.streetNameFn(pos);
     return 'Old Lucknow';
   }
 
+  // Static map layer, painted once by `paint(g, tx, tz, pxPerMetre)` over `bounds`.
   _drawBase() {
-    // Static map layer, redrawn into the round minimap around the player.
-    const S = 1400, c = document.createElement('canvas');
+    if (!this.paint) return;
+    const [x0, z0, x1, z1] = this.bounds;
+    const S = 2048;
+    this.baseScale = S / Math.max(x1 - x0, z1 - z0);
+    const c = document.createElement('canvas');
     c.width = c.height = S;
     const g = c.getContext('2d');
-    this.baseScale = S / 1240;
-    const tx = (x) => (x + 620) * this.baseScale, tz = (z) => (z + 620) * this.baseScale;
-    g.fillStyle = '#c9ab82';
-    g.fillRect(0, 0, S, S);
-    g.fillStyle = '#6f93a0';
-    g.fillRect(0, tz(SITES.river.z0), S, (SITES.river.z1 - SITES.river.z0) * this.baseScale);
-    for (const f of this.footprints) {
-      g.fillStyle = f.color;
-      g.fillRect(tx(f.x0), tz(f.z0), (f.x1 - f.x0) * this.baseScale, (f.z1 - f.z0) * this.baseScale);
-    }
-    g.fillStyle = '#5b534b';
-    g.fillRect(tx(ROAD.x0), tz(-ROAD.width / 2), (ROAD.x1 - ROAD.x0) * this.baseScale, ROAD.width * this.baseScale);
-    const t = SITES.tank;
-    g.fillStyle = '#6f93a0';
-    g.fillRect(tx(t.x - t.w / 2), tz(t.z - t.d / 2), t.w * this.baseScale, t.d * this.baseScale);
+    const tx = (x) => (x - x0) * this.baseScale, tz = (z) => (z - z0) * this.baseScale;
+    this.paint(g, tx, tz, this.baseScale);
     this.base = c;
     this.tx = tx; this.tz = tz;
   }
 
   _drawMap(pos, yaw) {
     const g = this.mctx, W = this.map.width;
-    const zoom = 2.2; // canvas px per metre on the minimap
+    const zoom = this.base ? 1.1 : 0.55; // canvas px per metre on the minimap
     g.save();
     g.clearRect(0, 0, W, W);
     g.beginPath();
@@ -109,14 +102,24 @@ export class HUD {
     g.translate(W / 2, W / 2);
     const k = zoom / this.baseScale;
     g.scale(k, k);
-    g.translate(-this.tx(pos.x), -this.tz(pos.z));
-    g.drawImage(this.base, 0, 0);
+    if (this.base) {
+      g.translate(-this.tx(pos.x), -this.tz(pos.z));
+      g.drawImage(this.base, 0, 0);
+    } else {
+      // no street layer: a plain dial with range rings
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = 'rgba(28,18,12,0.72)';
+      g.fillRect(0, 0, W, W);
+      g.strokeStyle = 'rgba(246,234,211,0.14)';
+      g.lineWidth = 2;
+      for (const rr of [60, 120]) { g.beginPath(); g.arc(W / 2, W / 2, rr, 0, Math.PI * 2); g.stroke(); }
+    }
     g.restore();
 
     // landmark pips
     g.save();
     g.translate(W / 2, W / 2);
-    PLACES.forEach((p, i) => {
+    this.places.forEach((p, i) => {
       let dx = (p.center[0] - pos.x) * zoom, dz = (p.center[1] - pos.z) * zoom;
       const l = Math.hypot(dx, dz), max = W / 2 - 18;
       if (l > max) { dx = dx / l * max; dz = dz / l * max; }
@@ -141,7 +144,7 @@ export class HUD {
     g.strokeStyle = 'rgba(28,18,12,0.6)';
     g.lineWidth = 6;
     g.beginPath(); g.arc(W / 2, W / 2, W / 2 - 3, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = '#1c120c';
+    g.fillStyle = this.base ? '#1c120c' : '#f6ead3';
     g.font = '700 18px Inter, sans-serif';
     g.textAlign = 'center';
     g.fillText('N', W / 2, 24);
