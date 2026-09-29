@@ -19,6 +19,7 @@ export function createEnvironment(renderer, scene) {
   u.cloudCoverage.value = 0.3;
   u.cloudDensity.value = 0.32;
   u.cloudElevation.value = 0.45;
+  sky.userData.noCull = true; // follows the player
   scene.add(sky);
 
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -69,6 +70,7 @@ export function createEnvironment(renderer, scene) {
   // a moon for the night sky
   const moon = new THREE.Mesh(new THREE.SphereGeometry(40, 24, 16), new THREE.MeshBasicMaterial({ color: '#fff6e0', fog: false }));
   moon.visible = false;
+  moon.userData.noCull = nightSky.userData.noCull = true;
   scene.add(moon);
 
   const sunDir = new THREE.Vector3();

@@ -418,11 +418,16 @@ function buildHouseMeshes(M, houses, r) {
   }
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
   const col = new THREE.Color();
-  const tanks = [];
+  // rooftop water tanks: a cheap open hexagonal drum, chunked with their houses so they cull too
+  const tankGeo = new THREE.CylinderGeometry(0.7, 0.7, 1.2, 6, 1, true).translate(0, 0.6, 0);
+  const tankLid = new THREE.CircleGeometry(0.7, 6).rotateX(-Math.PI / 2).translate(0, 1.2, 0);
+  const tankUnit = mergeGeometries([tankGeo.toNonIndexed(), tankLid.toNonIndexed()]);
+  const tankMat = new THREE.MeshStandardMaterial({ color: '#2b2b2b', roughness: 0.6 });
   for (const list of chunks.values()) {
     const geo = unitHouse(true);
     const shop = new Float32Array(list.length);
     const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    const tanks = [];
     list.forEach((h, i) => {
       m4.compose(p.set(h.x, 0, h.z), q.setFromAxisAngle(UP, h.ang), s.set(h.w, h.h, h.d));
       mesh.setMatrixAt(i, m4);
@@ -431,17 +436,30 @@ function buildHouseMeshes(M, houses, r) {
       shop[i] = h.shop;
       if (r() < 0.4) tanks.push(new THREE.Matrix4().makeTranslation(h.x + (r() - 0.5) * (h.w - 2), h.h, h.z + (r() - 0.5) * (h.d - 2)));
     });
-    geo.setAttribute('aShop', new THREE.InstancedBufferAttribute(shop, 1));
+    const shopAttr = new THREE.InstancedBufferAttribute(shop, 1);
+    geo.setAttribute('aShop', shopAttr);
     mesh.castShadow = mesh.receiveShadow = true;
     mesh.computeBoundingSphere();
     group.add(mesh);
+    // far version without the parapet rim (a third of the triangles), sharing the instance data
+    const farGeo = unitHouse(false);
+    farGeo.setAttribute('aShop', shopAttr);
+    const lod = new THREE.InstancedMesh(farGeo, mat, list.length);
+    lod.instanceMatrix = mesh.instanceMatrix;
+    lod.instanceColor = mesh.instanceColor;
+    lod.boundingSphere = mesh.boundingSphere;
+    lod.castShadow = lod.receiveShadow = true;
+    lod.visible = false;
+    mesh.userData.lod = lod;
+    group.add(lod);
+    if (tanks.length) {
+      const tankMesh = new THREE.InstancedMesh(tankUnit, tankMat, tanks.length);
+      tanks.forEach((t, i) => tankMesh.setMatrixAt(i, t));
+      tankMesh.castShadow = true;
+      tankMesh.computeBoundingSphere();
+      group.add(tankMesh);
+    }
   }
-  const tankGeo = new THREE.CylinderGeometry(0.7, 0.7, 1.2, 10).translate(0, 0.6, 0);
-  const tankMesh = new THREE.InstancedMesh(tankGeo, new THREE.MeshStandardMaterial({ color: '#2b2b2b', roughness: 0.6 }), tanks.length);
-  tanks.forEach((t, i) => tankMesh.setMatrixAt(i, t));
-  tankMesh.castShadow = true;
-  tankMesh.computeBoundingSphere();
-  group.add(tankMesh);
   return group;
 }
 
@@ -509,9 +527,15 @@ export function buildTrees(list, r) {
     },
   };
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3(), UP = new THREE.Vector3(0, 1, 0);
-  for (const [name, T] of Object.entries(types)) {
-    const items = list.filter((t) => t.type === name);
-    if (!items.length) continue;
+  // chunked so far-away groves can be culled
+  const CH = 240, buckets = new Map();
+  for (const t of list) {
+    const k = `${t.type}|${Math.floor(t.x / CH)},${Math.floor(t.z / CH)}`;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(t);
+  }
+  for (const [key, items] of buckets) {
+    const T = types[key.split('|')[0]];
     const trunk = new THREE.InstancedMesh(T.trunk, bark, items.length);
     const canopy = new THREE.InstancedMesh(T.canopy, leaf, items.length);
     items.forEach((t, i) => {

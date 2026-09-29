@@ -68,7 +68,9 @@ export class HUD {
       this.cardTimer -= dt;
       if (this.cardTimer <= 0) $('card').classList.remove('show');
     }
-    if (this.mapOn) this._drawMap(pos, yaw);
+    // the minimap only needs ~15 redraws a second
+    this.mapT = (this.mapT || 0) - dt;
+    if (this.mapOn && this.mapT <= 0) { this.mapT = 1 / 15; this._drawMap(pos, yaw); }
   }
 
   _streetName(pos) {

@@ -49,16 +49,28 @@ const player = new Player(camera, physics, input);
 const env = createEnvironment(renderer, scene);
 const sound = new Soundscape();
 
+// ---------- time of day (state) ----------
+const TIME_ORDER = ['morning', 'afternoon', 'evening', 'night'];
+let timeName = params.get('time') || (() => { try { return localStorage.getItem('lko-time'); } catch { return null; } })() || 'morning';
+if (!TIMES[timeName]) timeName = 'morning';
+let DAY_START = TIMES[timeName].clock; // minutes
+
 // ---------- quality ----------
+// draw: how far (m) chunks of houses, trees and monuments are drawn; the fog is thickened to match
+// so they fade out before they pop. minScale: how far the auto-resolution may drop.
 const QUALITY = {
-  high: { dpr: 2, shadow: 4096, shadows: true, bloom: true },
-  medium: { dpr: 1.5, shadow: 2048, shadows: true, bloom: false },
-  low: { dpr: 1, shadow: 1024, shadows: false, bloom: false },
+  high: { dpr: 2, shadow: 4096, shadows: true, bloom: true, draw: Infinity, life: 600, minScale: 0.75 },
+  medium: { dpr: 1.5, shadow: 2048, shadows: true, bloom: false, draw: 1100, life: 350, minScale: 0.7 },
+  low: { dpr: 1, shadow: 1024, shadows: false, bloom: false, draw: 650, life: 200, minScale: 0.6 },
 };
 let quality = 'high';
+let cullables = [];
+let cullT = 0;
+let resScale = 1, fpsAcc = 0, fpsN = 0, fastRuns = 0, govWarm = 3;
 function setQuality(q) {
   quality = q;
   const Q = QUALITY[q];
+  resScale = 1;
   renderer.setPixelRatio(Math.min(devicePixelRatio, Q.dpr));
   const size = Q.shadow;
   if (env.sun.shadow.mapSize.x !== size) {
@@ -71,6 +83,8 @@ function setQuality(q) {
     scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => (m.needsUpdate = true)); });
   }
   scene.traverse((o) => { if (o.userData.far) o.visible = q !== 'low'; });
+  applyFog();
+  cullT = 0;
   resize();
   document.querySelectorAll('#quality button').forEach((b) => b.classList.toggle('on', b.dataset.q === q));
   try { localStorage.setItem('lko-quality', q); } catch {}
@@ -83,10 +97,60 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 addEventListener('resize', resize);
+
+// Fog never thinner than the draw distance allows, so culled chunks fade instead of popping.
+function applyFog() {
+  if (!timeName) return;
+  const d = QUALITY[quality].draw;
+  scene.fog.density = Math.max(TIMES[timeName].fogD, Number.isFinite(d) ? 1.7 / d : 0);
+}
+
+// Distance culling: every mesh with a bounded footprint is hidden beyond the draw distance.
+function collectCullables() {
+  cullables = [];
+  const c = new THREE.Vector3();
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.frustumCulled || o.userData.far || o.userData.isLod || o.userData.noCull) return;
+    const sph = o.isInstancedMesh ? (o.boundingSphere || (o.computeBoundingSphere(), o.boundingSphere)) : (o.geometry.boundingSphere || (o.geometry.computeBoundingSphere(), o.geometry.boundingSphere));
+    if (!sph || sph.radius > 500) return; // ground, roads and city-wide sets stay on
+    o.updateWorldMatrix(true, false);
+    c.copy(sph.center).applyMatrix4(o.matrixWorld);
+    cullables.push({ o, x: c.x, z: c.z, r: sph.radius, lod: o.userData.lod });
+    if (o.userData.lod) o.userData.lod.userData.isLod = true;
+  });
+}
+const LOD_NEAR = 250;
+function cull(pos) {
+  const d = QUALITY[quality].draw;
+  for (const e of cullables) {
+    const dist = Math.hypot(e.x - pos.x, e.z - pos.z) - e.r;
+    const on = !Number.isFinite(d) || dist < d;
+    if (e.lod) { e.o.visible = on && dist < LOD_NEAR; e.lod.visible = on && dist >= LOD_NEAR; }
+    else e.o.visible = on;
+  }
+}
+
+// Auto resolution: if frames run slow, render fewer pixels; recover when there is headroom.
+function governResolution(dt) {
+  if ((govWarm -= dt) > 0) return; // ignore the hitches right after loading or teleporting
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc < 1.5) return;
+  const fps = fpsN / fpsAcc;
+  fpsAcc = 0; fpsN = 0;
+  const Q = QUALITY[quality];
+  let next = resScale;
+  if (fps < 45) { next = Math.max(Q.minScale, resScale * 0.85); fastRuns = 0; }
+  else if (fps > 57 && resScale < 1 && ++fastRuns >= 3) { next = Math.min(1, resScale / 0.85); fastRuns = 0; }
+  if (Math.abs(next - resScale) > 0.01) {
+    resScale = next;
+    renderer.setPixelRatio(Math.min(devicePixelRatio, Q.dpr) * resScale);
+    resize();
+  }
+}
 {
   let saved = null;
   try { saved = localStorage.getItem('lko-quality'); } catch {}
-  const q = params.get('q') || saved || (input.isTouch ? 'medium' : 'high');
+  const q = params.get('q') || saved || (input.isTouch ? 'low' : 'high');
   setQuality(QUALITY[q] ? q : 'high');
 }
 document.querySelectorAll('#quality button').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); setQuality(b.dataset.q); }));
@@ -97,6 +161,7 @@ const updatables = [];
 const zones = { bazaar: { ...BAZAAR }, water: [{ x: 1e6, z: 1e6, r: 0 }], clock: { x: CLOCK.x, z: CLOCK.z }, groundY: 0 };
 const ctx = {
   M: null, physics, scene, footprints, updatables, camera, player, zones,
+  get lifeRange() { return QUALITY[quality].life; },
   reserved: [], groundHoles: [], rumi: RUMI, bazaar: BAZAAR, skipWaterNear: [[TANK.x, TANK.z, 90]],
 };
 
@@ -125,6 +190,7 @@ async function build() {
     $('progress-bar').style.width = `${((i + 1) / steps.length) * 100}%`;
   }
   hud.drawBase();
+  collectCullables();
   // compile shaders up front so the first steps are smooth
   teleport(params.has('place') ? +params.get('place') - 1 : 1, false);
   env.follow(player.pos);
@@ -170,6 +236,7 @@ function nearestWater(p) {
 function teleport(i, announce = true) {
   const p = PLACES[i];
   if (!p) return;
+  govWarm = 1.5; cullT = 0;
   let [x, z] = (timeName === 'evening' && p.spawnEvening) || p.spawn;
   // never land on a roof: find the nearest open ground if the spawn point is covered
   const clear = (qx, qz) => physics.groundHeight(qx, qz, 0.35, 80, 200) < 1.3 && !physics.blocked(qx, qz);
@@ -224,13 +291,10 @@ const timer = new THREE.Timer();
 timer.connect(document);
 let t = 0;
 // ---------- time of day ----------
-const TIME_ORDER = ['morning', 'afternoon', 'evening', 'night'];
-let timeName = params.get('time') || (() => { try { return localStorage.getItem('lko-time'); } catch { return null; } })() || 'morning';
-if (!TIMES[timeName]) timeName = 'morning';
-let DAY_START = TIMES[timeName].clock; // minutes
 function setTime(name) {
   timeName = name;
   env.set(name, ctx.M);
+  applyFog();
   DAY_START = TIMES[name].clock - t / 8;
   bloom.strength = name === 'night' ? 0.6 : name === 'evening' ? 0.28 : 0.12;
   bloom.threshold = name === 'night' ? 0.85 : name === 'evening' ? 1.8 : 4;
@@ -257,6 +321,8 @@ function loop() {
   }
   env.follow(player.pos);
   env.update(t);
+  if ((cullT -= dt) <= 0) { cullT = 0.25; cull(player.pos); }
+  if (started && !params.has('shot')) governResolution(timer.getDelta() || dt);
   for (const u of updatables) u.update?.(t, dt);
   if (started) {
     hud.update(dt, player.pos, player.yaw, clockText());

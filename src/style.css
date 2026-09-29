@@ -133,3 +133,10 @@ body.real-mode .real-only { display: inline; }
 
 .pill { appearance: none; height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--glass); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; cursor: pointer; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 @media (max-width: 520px) { .pill { padding: 0 10px; font-size: 11px; } .settings { gap: 5px; } }
+
+/* Phones: a blurred backdrop over a moving WebGL canvas is re-blurred every frame, which costs
+   more than the 3D scene on many mobile GPUs. Use solid glass instead. */
+@media (pointer: coarse) {
+  *, *::before, *::after { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+  :root { --glass: rgba(28, 18, 12, 0.78); }
+}

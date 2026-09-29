@@ -172,10 +172,16 @@ export function buildLife(ctx) {
   const bodies = new THREE.InstancedMesh(pg.body, clothMat, nP);
   const heads = new THREE.InstancedMesh(pg.head, skinMat, nP);
   const caps = new THREE.InstancedMesh(pg.cap, new THREE.MeshStandardMaterial({ color: '#f6f3ea', roughness: 0.9 }), nP);
+  // colours belong to the person, not the instance slot: only people near the camera are packed
+  // into the draw each frame (see ctx.lifeRange), so slots change hands
+  const bodyCol = [], headCol = [];
   for (let i = 0; i < nP; i++) {
-    bodies.setColorAt(i, new THREE.Color(KURTA[Math.floor(r() * KURTA.length)]));
-    heads.setColorAt(i, new THREE.Color(SKIN[Math.floor(r() * SKIN.length)]));
+    bodyCol.push(new THREE.Color(KURTA[Math.floor(r() * KURTA.length)]));
+    headCol.push(new THREE.Color(SKIN[Math.floor(r() * SKIN.length)]));
+    bodies.setColorAt(i, bodyCol[i]);
+    heads.setColorAt(i, headCol[i]);
   }
+  const personSlot = new Int32Array(nP).fill(-1), riderSlot = new Int32Array(Math.max(1, riders.length)).fill(-1);
   for (const m of [bodies, heads, caps]) {
     m.castShadow = true;
     m.frustumCulled = false;
@@ -186,7 +192,8 @@ export function buildLife(ctx) {
   const frames = new THREE.InstancedMesh(rg.frame, new THREE.MeshStandardMaterial({ color: '#2a2622', roughness: 0.6, metalness: 0.5 }), riders.length);
   const canopies = new THREE.InstancedMesh(rg.canopy, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, side: THREE.DoubleSide }), riders.length);
   const CANOPY = ['#2d6b3f', '#1f4f8a', '#a8262e', '#d9a21e', '#3a3a3a', '#7a2c6a'];
-  riders.forEach((_, i) => canopies.setColorAt(i, new THREE.Color(CANOPY[i % CANOPY.length])));
+  const canopyCol = riders.map((_, i) => new THREE.Color(CANOPY[i % CANOPY.length]));
+  canopyCol.forEach((c, i) => canopies.setColorAt(i, c));
   for (const m of [frames, canopies]) {
     m.castShadow = true; m.frustumCulled = false;
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -268,7 +275,17 @@ export function buildLife(ctx) {
 
   ctx.updatables.push({
     update(t, dt) {
-      // walkers
+      // walkers: everyone moves, but only those within range are drawn
+      const cam = ctx.camera.position;
+      const range = ctx.lifeRange ?? Infinity, R2 = range * range;
+      let j = 0, rj = 0, recolor = false;
+      const claim = (slot, i) => {
+        if (personSlot[slot] === i) return;
+        personSlot[slot] = i;
+        bodies.setColorAt(slot, bodyCol[i]);
+        heads.setColorAt(slot, headCol[i]);
+        recolor = true;
+      };
       for (let i = 0; i < walkers.length; i++) {
         const w = walkers[i];
         if (w.speed > 0) {
@@ -277,11 +294,14 @@ export function buildLife(ctx) {
           if (w.t < 0) { w.t = 0; w.dir = 1; }
         }
         const x = w.ax + (w.bx - w.ax) * w.t, z = w.az + (w.bz - w.az) * w.t;
+        if ((x - cam.x) ** 2 + (z - cam.z) ** 2 > R2) continue;
         const yaw = w.speed > 0 ? Math.atan2(w.dir * (w.bx - w.ax), w.dir * (w.bz - w.az)) : w.idleYaw;
         const bob = w.speed > 0 ? (t * w.speed * 5.2 + w.phase) : 0;
-        ped(i, x, w.y, z, yaw, bob, w.scale);
+        claim(j, i);
+        ped(j, x, w.y, z, yaw, bob, w.scale);
         _m.compose(_p.set(x, w.y + (w.cap ? Math.abs(Math.sin(bob)) * 0.04 : -50), z), _q, _s.set(w.scale, w.scale, w.scale));
-        caps.setMatrixAt(i, _m);
+        caps.setMatrixAt(j, _m);
+        j++;
       }
       // rickshaws + riders
       for (let k = 0; k < riders.length; k++) {
@@ -294,16 +314,23 @@ export function buildLife(ctx) {
         const fx = (at.dx / l) * rd.dir, fz = (at.dz / l) * rd.dir;
         // keep left: left of heading (fx, fz) is (fz, -fx)
         rd.x = at.x + fz * rd.lane; rd.z = at.z - fx * rd.lane;
+        if ((rd.x - cam.x) ** 2 + (rd.z - cam.z) ** 2 > R2) continue;
         const yaw = Math.atan2(-fz, fx);
         _q.setFromAxisAngle(_p.set(0, 1, 0), yaw);
         _m.compose(_p.set(rd.x, 0, rd.z), _q, _s.set(1, 1, 1));
-        frames.setMatrixAt(k, _m);
-        canopies.setMatrixAt(k, _m);
-        const i = walkers.length + k;
-        ped(i, rd.x + fx * 0.55, 0.35, rd.z + fz * 0.55, yaw, t * 6 + rd.bob, 0.95);
+        frames.setMatrixAt(rj, _m);
+        canopies.setMatrixAt(rj, _m);
+        if (riderSlot[rj] !== k) { riderSlot[rj] = k; canopies.setColorAt(rj, canopyCol[k]); canopies.instanceColor.needsUpdate = true; }
+        rj++;
+        claim(j, walkers.length + k);
+        ped(j, rd.x + fx * 0.55, 0.35, rd.z + fz * 0.55, yaw, t * 6 + rd.bob, 0.95);
         _m.compose(_p.set(0, -50, 0), _q, _s.set(1, 1, 1));
-        caps.setMatrixAt(i, _m);
+        caps.setMatrixAt(j, _m);
+        j++;
       }
+      bodies.count = heads.count = caps.count = j;
+      frames.count = canopies.count = rj;
+      if (recolor) { bodies.instanceColor.needsUpdate = true; heads.instanceColor.needsUpdate = true; }
       bodies.instanceMatrix.needsUpdate = true;
       heads.instanceMatrix.needsUpdate = true;
       caps.instanceMatrix.needsUpdate = true;
